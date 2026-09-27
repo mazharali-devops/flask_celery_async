@@ -595,65 +595,6 @@ The test suite covers:
 
 A successful test run should show all tests passing.
 
-## Building the Package
-
-Install the build tooling:
-
-```bash
-python -m pip install build
-```
-
-Build the source distribution and wheel:
-
-```bash
-python -m build
-```
-
-The generated files will be placed in:
-
-```text
-dist/
-```
-
-You can inspect and test the generated wheel with:
-
-```bash
-python -m pip install dist/*.whl
-```
-
-To validate the generated distribution metadata:
-
-```bash
-python -m pip install twine
-python -m twine check dist/*
-```
-
-## Publishing
-
-The project can be published to PyPI using the GitHub Actions publishing workflow.
-
-The recommended release flow is:
-
-1. Update the package version.
-2. Update `src/flask_async_celery/__init__.py`.
-3. Run the complete test suite.
-4. Build the package.
-5. Run `twine check`.
-6. Commit and push the changes.
-7. Create a Git tag such as `v0.1.1`.
-8. Create a GitHub release for that tag.
-9. GitHub Actions publishes the package to PyPI.
-
-Example:
-
-```bash
-pytest -v
-
-python -m build
-
-python -m twine check dist/*
-```
-
 ## Version
 
 Current version:
