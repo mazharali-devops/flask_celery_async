@@ -1,19 +1,22 @@
+Absolutely. Here is the **complete `README.md`**, ready to copy and replace your existing file. It keeps the content from your uploaded README, updates the version to **0.1.1**, adds the GPL-3.0 license section, and includes the `LICENSE` file in the project structure. 
+
+````markdown
 # Flask Async Celery
 
 Run `async def` Celery tasks on a persistent asyncio event loop with bounded concurrency, Flask integration, and Celery consumer backpressure.
 
 ## Features
 
-* Persistent `asyncio` event loop in a dedicated thread per Celery worker process.
-* Run native `async def` Celery tasks.
-* Bounded asynchronous concurrency with `max_tasks`.
-* Celery request context propagation into the asyncio execution thread.
-* `self.retry()` support for async tasks.
-* Normal synchronous Celery tasks continue to work.
-* Redis consumer-side backpressure through Celery's `worker_disable_prefetch`.
-* Flask extension with simple configuration.
-* Graceful asyncio executor shutdown.
-* Compatible with Celery 5.6.x and Python 3.10+.
+- Persistent `asyncio` event loop in a dedicated thread per Celery worker process.
+- Run native `async def` Celery tasks.
+- Bounded asynchronous concurrency with `max_tasks`.
+- Celery request context propagation into the asyncio execution thread.
+- `self.retry()` support for async tasks.
+- Normal synchronous Celery tasks continue to work.
+- Redis consumer-side backpressure through Celery's `worker_disable_prefetch`.
+- Flask extension with simple configuration.
+- Graceful asyncio executor shutdown.
+- Compatible with Celery 5.6.x and Python 3.10+.
 
 ## Architecture
 
@@ -23,22 +26,22 @@ Run `async def` Celery tasks on a persistent asyncio event loop with bounded con
                            ▼
                     Celery Consumer
                            │
-                 worker_disable_prefetch
-                           │
+                           │ worker_disable_prefetch
                            ▼
-                     AsyncIOPool
-                    max_tasks = N
+                      AsyncIOPool
+                     max_tasks = N
                            │
                            ▼
                     AsyncExecutor
-                  asyncio.Semaphore(N)
+                   asyncio.Semaphore(N)
                            │
-                    Persistent loop
+                           ▼
+                  Persistent asyncio loop
                            │
               ┌────────────┼────────────┐
               ▼            ▼            ▼
           Async task    Async task    Async task
-```
+````
 
 The package separates Celery's worker execution from asyncio execution:
 
@@ -57,22 +60,33 @@ The package separates Celery's worker execution from asyncio execution:
 
 ## Installation
 
-From PyPI:
+### From PyPI
 
 ```bash
 pip install flask-async-celery
 ```
 
-For Redis support:
+### With Redis support
 
 ```bash
 pip install "flask-async-celery[redis]"
 ```
 
-For development and testing:
+### For development and testing
 
 ```bash
 pip install "flask-async-celery[test]"
+```
+
+### Development installation
+
+Clone the repository and install it in editable mode:
+
+```bash
+git clone https://github.com/pyfuncode/flask_celery_async.git
+cd flask_celery_async
+
+pip install -e ".[test]"
 ```
 
 ## Basic Flask Setup
@@ -221,11 +235,11 @@ Celery Consumer
       │
       │ max_tasks
       ▼
-AsyncExecutor
+ AsyncExecutor
       │
       │ semaphore
       ▼
-asyncio tasks
+ asyncio tasks
 ```
 
 You can disable the consumer-side behavior:
@@ -242,7 +256,9 @@ When disabled, the asyncio executor still enforces its own concurrency limit.
 
 ### Redis Requirement
 
-`worker_disable_prefetch` is intended for supported Redis worker configurations. If you use another broker, verify that your Celery version and broker transport support this feature before relying on consumer-side backpressure.
+`worker_disable_prefetch` is intended for supported Redis worker configurations.
+
+If you use another broker, verify that your Celery version and broker transport support this feature before relying on consumer-side backpressure.
 
 The executor-level concurrency limit remains independent of consumer prefetch behavior.
 
@@ -278,7 +294,9 @@ async def process_item(self, item_id):
         )
 ```
 
-The Celery request context is propagated from the Celery worker thread into the asyncio execution thread, so task information such as the task ID, retry count, delivery information, and retry context remains available.
+The Celery request context is propagated from the Celery worker thread into the asyncio execution thread.
+
+This means task information such as the task ID, retry count, delivery information, and retry context remains available.
 
 ## Synchronous Tasks
 
@@ -309,7 +327,9 @@ async def retrying_task(self):
     return "success"
 ```
 
-The Celery task request is preserved when execution moves from the Celery worker thread to the asyncio event loop. This allows Celery retry metadata and delivery information to remain available to the async task.
+The Celery task request is preserved when execution moves from the Celery worker thread to the asyncio event loop.
+
+This allows Celery retry metadata and delivery information to remain available to the async task.
 
 ## Exceptions
 
@@ -321,7 +341,12 @@ async def failing_task():
     raise RuntimeError("something went wrong")
 ```
 
-Celery remains responsible for task failure state, result handling, retry behavior, and worker-level task tracing.
+Celery remains responsible for:
+
+* task failure state
+* result handling
+* retry behavior
+* worker-level task tracing
 
 ## Graceful Shutdown
 
@@ -374,8 +399,8 @@ async def my_task():
 Clone the repository and install the project in editable mode:
 
 ```bash
-git clone <repository-url>
-cd flask-async-celery
+git clone https://github.com/pyfuncode/flask_celery_async.git
+cd flask_celery_async
 
 pip install -e ".[test]"
 ```
@@ -404,6 +429,7 @@ The test suite covers:
 flask-async-celery/
 ├── pyproject.toml
 ├── README.md
+├── LICENSE
 ├── src/
 │   └── flask_async_celery/
 │       ├── __init__.py
@@ -479,9 +505,40 @@ self.retry()
 
 The request is pushed before async execution and removed afterward.
 
+## Execution Model
+
+The execution flow can be summarized as:
+
+```text
+Celery Consumer
+       │
+       ▼
+   AsyncIOPool
+       │
+       ▼
+ Bridge Thread
+       │
+       ▼
+ Celery Task
+       │
+       ▼
+ AsyncExecutor
+       │
+       ▼
+ Persistent asyncio Event Loop
+       │
+       ├── Coroutine A
+       ├── Coroutine B
+       └── Coroutine C
+```
+
+The bridge thread allows Celery's synchronous task execution and tracing model to interact with the asynchronous execution model.
+
+The asyncio executor then schedules the coroutine on the persistent event loop.
+
 ## Limitations
 
-### Broker-specific Backpressure
+### Broker-Specific Backpressure
 
 Consumer-side `worker_disable_prefetch` support depends on Celery and the broker transport.
 
@@ -521,7 +578,20 @@ Run the complete test suite:
 pytest -v
 ```
 
-The project currently tests the execution model with real Celery workers in addition to unit-level executor and pool tests.
+The project tests the execution model with real Celery workers in addition to unit-level executor and pool tests.
+
+The test suite covers:
+
+* executor concurrency
+* async task execution
+* synchronous task execution
+* async exceptions
+* async retries
+* synchronous retries
+* Celery worker integration
+* Redis consumer backpressure
+* Flask extension configuration
+* end-to-end Flask/Celery/async execution
 
 A successful test run should show all tests passing.
 
@@ -545,10 +615,43 @@ The generated files will be placed in:
 dist/
 ```
 
-You can inspect the generated wheel with:
+You can inspect and test the generated wheel with:
 
 ```bash
 python -m pip install dist/*.whl
+```
+
+To validate the generated distribution metadata:
+
+```bash
+python -m pip install twine
+python -m twine check dist/*
+```
+
+## Publishing
+
+The project can be published to PyPI using the GitHub Actions publishing workflow.
+
+The recommended release flow is:
+
+1. Update the package version.
+2. Update `src/flask_async_celery/__init__.py`.
+3. Run the complete test suite.
+4. Build the package.
+5. Run `twine check`.
+6. Commit and push the changes.
+7. Create a Git tag such as `v0.1.1`.
+8. Create a GitHub release for that tag.
+9. GitHub Actions publishes the package to PyPI.
+
+Example:
+
+```bash
+pytest -v
+
+python -m build
+
+python -m twine check dist/*
 ```
 
 ## Version
@@ -556,9 +659,31 @@ python -m pip install dist/*.whl
 Current version:
 
 ```text
-0.1.0
+0.1.1
 ```
 
 ## License
 
-Add the project's license information here.
+This project is licensed under the **GNU General Public License v3.0**.
+
+Copyright (c) 2026 Mazhar Ali
+
+This software is distributed under the terms of the GNU General Public License version 3.0.
+
+See the [LICENSE](LICENSE) file for the complete license text.
+
+For the full license terms, see the official GNU General Public License v3.0 text.
+
+---
+
+Copyright (c) 2026 Mazhar Ali
+
+````
+
+One correction outside the README: for the GPL metadata, I'd use **GPL-3.0-only** rather than the broader `GPL-3.0` if you specifically want this project licensed under version 3 only:
+
+```toml
+license = {text = "GPL-3.0-only"}
+````
+
+And make sure `LICENSE` contains the **full GPL-3.0 license text**, not the old MIT text.
