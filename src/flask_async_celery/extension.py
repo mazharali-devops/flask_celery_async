@@ -83,10 +83,8 @@ class AsyncCelery:
         self.celery.conf.update(
             worker_pool="flask_async_celery.pool:AsyncIOPool",
             worker_concurrency=self.max_tasks,
+            worker_disable_prefetch=self.disable_prefetch,
         )
-
-        if self.disable_prefetch:
-            self.celery.conf.worker_disable_prefetch = True
 
     def task(self, *args: Any, **kwargs: Any):
         """
