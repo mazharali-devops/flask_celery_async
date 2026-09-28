@@ -1,13 +1,16 @@
+Absolutely. Here is the **complete `README.md`**, ready to copy and replace your existing file. It keeps the content from your uploaded README, updates the version to **0.1.1**, adds the GPL-3.0 license section, and includes the `LICENSE` file in the project structure. 
+
+````markdown
 # Flask Async Celery
 
-Run native `async def` Celery tasks on a persistent asyncio event loop with bounded concurrency, Flask integration, and Celery consumer-side backpressure.
+Run `async def` Celery tasks on a persistent asyncio event loop with bounded concurrency, Flask integration, and Celery consumer backpressure.
 
 ## Features
 
 - Persistent `asyncio` event loop in a dedicated thread per Celery worker process.
 - Run native `async def` Celery tasks.
 - Bounded asynchronous concurrency with `max_tasks`.
-- Celery task request context propagation into the asyncio execution thread.
+- Celery request context propagation into the asyncio execution thread.
 - `self.retry()` support for async tasks.
 - Normal synchronous Celery tasks continue to work.
 - Redis consumer-side backpressure through Celery's `worker_disable_prefetch`.
@@ -29,36 +32,31 @@ Run native `async def` Celery tasks on a persistent asyncio event loop with boun
                      max_tasks = N
                            │
                            ▼
-                     Bridge Threads
-                           │
-                           ▼
-                     AsyncExecutor
-                    asyncio.Semaphore(N)
+                    AsyncExecutor
+                   asyncio.Semaphore(N)
                            │
                            ▼
                   Persistent asyncio loop
                            │
-               ┌───────────┼───────────┐
-               ▼           ▼           ▼
-           Async task  Async task  Async task
-```
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+          Async task    Async task    Async task
+````
 
-The package separates Celery's worker execution model from asyncio execution:
+The package separates Celery's worker execution from asyncio execution:
 
 1. Celery receives and traces the task.
 2. `AsyncIOPool` bridges Celery execution into the asyncio executor.
 3. `AsyncExecutor` owns a persistent asyncio event loop.
-4. An asyncio semaphore limits the number of actively executing async tasks.
-5. Celery's Redis `worker_disable_prefetch` option can reduce unnecessary task reservation when consumer-side backpressure is enabled.
-
-The package does **not** manually pause and resume the Celery consumer. Consumer-side backpressure is provided through Celery's supported `worker_disable_prefetch` behavior.
+4. A semaphore limits active async tasks.
+5. Celery's Redis `worker_disable_prefetch` option can prevent the consumer from reserving work beyond the available pool capacity.
 
 ## Requirements
 
-- Python 3.10+
-- Celery 5.6.x
-- Flask 2.3+
-- Redis when using the Redis broker/result backend and consumer-side backpressure
+* Python 3.10+
+* Celery 5.6.x
+* Flask 2.3+
+* Redis when using the Redis broker/result backend and consumer backpressure.
 
 ## Installation
 
@@ -98,7 +96,7 @@ import asyncio
 
 from flask import Flask
 
-from flask_async_celery import AsyncCelery
+from flask_async_celery import AsyncCelery, AsyncTask
 
 
 app = Flask(__name__)
@@ -112,7 +110,7 @@ celery = AsyncCelery(
 )
 
 
-@celery.task
+@celery.task(base=AsyncTask)
 async def my_task(value):
     await asyncio.sleep(1)
     return value * 2
@@ -125,18 +123,6 @@ result = my_task.delay(10)
 
 print(result.get(timeout=30))
 # 20
-```
-
-`AsyncCelery.task()` automatically uses `AsyncTask` for native async task functions. You can also specify `base=AsyncTask` explicitly when you want to make the task base visible:
-
-```python
-from flask_async_celery import AsyncTask
-
-
-@celery.task(base=AsyncTask)
-async def another_task():
-    await asyncio.sleep(1)
-    return "done"
 ```
 
 ## Flask Configuration
@@ -156,10 +142,10 @@ celery = AsyncCelery(
 
 Available settings:
 
-| Setting | Default | Description |
-| --- | ---: | --- |
-| `ASYNC_CELERY_MAX_TASKS` | `20` | Maximum number of concurrently executing async tasks. |
-| `ASYNC_CELERY_DISABLE_PREFETCH` | `True` | Enables Celery consumer-side backpressure where supported. |
+| Setting                         | Default | Description                                           |
+| ------------------------------- | ------: | ----------------------------------------------------- |
+| `ASYNC_CELERY_MAX_TASKS`        |    `20` | Maximum number of concurrently executing async tasks. |
+| `ASYNC_CELERY_DISABLE_PREFETCH` |  `True` | Enables Celery consumer-side backpressure.            |
 
 Constructor arguments can also be used directly:
 
@@ -193,27 +179,7 @@ celery -A your_app.celery worker \
     --loglevel=INFO
 ```
 
-The extension configures Celery's worker concurrency from `max_tasks`.
-
-If you provide `-c` on the worker command line, make sure it matches the configured `max_tasks` value.
-
-For example:
-
-```python
-celery = AsyncCelery(
-    app,
-    max_tasks=5,
-)
-```
-
-should normally be started with:
-
-```bash
-celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
-    -c 5 \
-    --loglevel=INFO
-```
+The `-c` value should match the desired async concurrency.
 
 The custom pool exposes its configured concurrency through `num_processes`, allowing Celery's consumer to use the same capacity when consumer-side prefetch is disabled.
 
@@ -240,8 +206,6 @@ Additional work waits for an available execution slot.
 
 This is different from simply creating more threads. The package uses one persistent asyncio event loop and runs async coroutines concurrently on that loop.
 
-Each Celery worker process has its own asyncio executor and event loop.
-
 ## Consumer Backpressure
 
 For Redis, Celery 5.6 supports:
@@ -250,7 +214,7 @@ For Redis, Celery 5.6 supports:
 worker_disable_prefetch = True
 ```
 
-The extension enables this behavior by default:
+The extension enables this by default:
 
 ```python
 celery = AsyncCelery(
@@ -260,15 +224,14 @@ celery = AsyncCelery(
 )
 ```
 
-When supported by the broker transport, this provides consumer-side backpressure in addition to the executor's own concurrency limit:
+This provides two levels of protection:
 
 ```text
 Celery Consumer
       │
-      │ worker_disable_prefetch
-      │
+      │ Don't reserve beyond available capacity
       ▼
-  AsyncIOPool
+ AsyncIOPool
       │
       │ max_tasks
       ▼
@@ -278,8 +241,6 @@ Celery Consumer
       ▼
  asyncio tasks
 ```
-
-The executor's semaphore remains the final execution boundary.
 
 You can disable the consumer-side behavior:
 
@@ -299,24 +260,11 @@ When disabled, the asyncio executor still enforces its own concurrency limit.
 
 If you use another broker, verify that your Celery version and broker transport support this feature before relying on consumer-side backpressure.
 
-The executor-level `max_tasks` limit remains independent of consumer prefetch behavior.
-
-The package does not manually pause or resume the Celery consumer.
+The executor-level concurrency limit remains independent of consumer prefetch behavior.
 
 ## Async Tasks
 
-Native async tasks can be declared directly with `@celery.task`:
-
-```python
-@celery.task
-async def fetch_data():
-    await some_async_operation()
-    return "done"
-```
-
-The extension automatically uses `AsyncTask` for async task functions.
-
-You can also explicitly specify the task base:
+Use `AsyncTask` as the base class for native async tasks:
 
 ```python
 from flask_async_celery import AsyncTask
@@ -328,12 +276,11 @@ async def fetch_data():
     return "done"
 ```
 
-### Celery Task Features
-
-Async tasks can use normal Celery task features such as bound tasks and retries:
+The task can use normal Celery task features:
 
 ```python
 @celery.task(
+    base=AsyncTask,
     bind=True,
     max_retries=3,
 )
@@ -347,49 +294,13 @@ async def process_item(self, item_id):
         )
 ```
 
-## Celery Request Context
+The Celery request context is propagated from the Celery worker thread into the asyncio execution thread.
 
-The package propagates the Celery task request from the Celery worker execution thread into the asyncio execution thread.
-
-This preserves Celery request information such as:
-
-```python
-self.request.id
-self.request.retries
-self.request.delivery_info
-```
-
-and allows features such as:
-
-```python
-self.retry()
-```
-
-to continue working for async tasks.
-
-The request is pushed before async execution and removed afterward.
-
-### Flask HTTP Request Context
-
-Celery task request propagation is different from Flask HTTP request-context propagation.
-
-The package does **not** keep a Flask HTTP request context alive while a background Celery task executes.
-
-If a background task needs information from an HTTP request, pass that information explicitly as task arguments.
-
-For example:
-
-```python
-@celery.task
-async def process_user(user_id, request_id):
-    ...
-```
-
-This is preferable to depending on the lifetime of the original HTTP request.
+This means task information such as the task ID, retry count, delivery information, and retry context remains available.
 
 ## Synchronous Tasks
 
-Normal synchronous Celery tasks can still be used:
+Normal synchronous tasks can still be used:
 
 ```python
 @celery.task
@@ -399,14 +310,13 @@ def sync_task(value):
 
 The package does not require every task to be asynchronous.
 
-Synchronous tasks continue through the normal Celery task execution path.
-
 ## Retries
 
 Async `self.retry()` is supported:
 
 ```python
 @celery.task(
+    base=AsyncTask,
     bind=True,
     max_retries=3,
 )
@@ -423,36 +333,32 @@ This allows Celery retry metadata and delivery information to remain available t
 
 ## Exceptions
 
-Exceptions raised by an async task propagate through the normal Celery execution path:
+Exceptions raised by an async task propagate through the Celery execution path:
 
 ```python
-@celery.task
+@celery.task(base=AsyncTask)
 async def failing_task():
     raise RuntimeError("something went wrong")
 ```
 
 Celery remains responsible for:
 
-- task failure state
-- result handling
-- retry behavior
-- worker-level task tracing
-
-The package provides the asyncio execution layer without replacing Celery's task tracing and lifecycle handling.
+* task failure state
+* result handling
+* retry behavior
+* worker-level task tracing
 
 ## Graceful Shutdown
 
 The asyncio executor runs in a dedicated daemon thread.
 
-During normal pool shutdown, the executor:
+When the pool stops, the executor:
 
 1. Stops accepting new work.
 2. Stops the asyncio event loop.
 3. Cancels pending asyncio tasks.
-4. Waits for the loop thread when requested.
-5. Closes the asyncio event loop.
-
-The pool and executor remain responsible for their own lifecycle cleanup.
+4. Waits for the loop thread to terminate.
+5. Closes the event loop.
 
 ## Public API
 
@@ -464,7 +370,7 @@ from flask_async_celery import AsyncCelery, AsyncTask
 
 ### `AsyncCelery`
 
-Provides Flask integration and Celery configuration:
+Flask integration and Celery configuration.
 
 ```python
 AsyncCelery(
@@ -488,16 +394,6 @@ async def my_task():
     ...
 ```
 
-In most cases you can simply use:
-
-```python
-@celery.task
-async def my_task():
-    ...
-```
-
-because `AsyncCelery` automatically uses `AsyncTask` for async tasks.
-
 ## Development
 
 Clone the repository and install the project in editable mode:
@@ -517,19 +413,15 @@ pytest -v
 
 The test suite covers:
 
-- asyncio executor concurrency
-- asyncio executor lifecycle and shutdown
-- `AsyncIOPool` execution
-- async task exceptions
-- async retries
-- synchronous task execution
-- synchronous retries
-- Celery worker integration
-- Redis consumer backpressure
-- Celery Hub wakeup handling
-- Flask extension configuration
-- Flask application-context isolation
-- end-to-end Flask/Celery/async execution
+* asyncio executor concurrency
+* AsyncIOPool execution
+* async task exceptions
+* async retries
+* synchronous retries
+* real Celery worker integration
+* Redis consumer backpressure
+* Flask extension configuration
+* end-to-end Flask/Celery/async execution
 
 ## Project Structure
 
@@ -544,8 +436,6 @@ flask-async-celery/
 │       ├── extension.py
 │       ├── executor.py
 │       ├── bootstep.py
-│       ├── hub_bootstep.py
-│       ├── hub_wakeup.py
 │       ├── pool.py
 │       └── task.py
 └── test/
@@ -565,19 +455,19 @@ This package does not replace Celery's task tracing and lifecycle handling.
 
 Celery remains responsible for:
 
-- task delivery
-- task acknowledgment
-- retries
-- result state
-- task IDs
-- worker lifecycle
-- task tracing
+* task delivery
+* task acknowledgment
+* retries
+* result state
+* task IDs
+* worker lifecycle
+* task tracing
 
 The package provides the asyncio execution layer and integrates it with Celery's pool interface.
 
-### Persistent Event Loop
-
 The asyncio event loop is persistent for the lifetime of the worker process rather than creating a new event loop for every task.
+
+### Why a Persistent Event Loop?
 
 Creating a new event loop for every task adds unnecessary setup and teardown overhead.
 
@@ -598,9 +488,9 @@ Celery Worker Process
 
 Async tasks can therefore share the same event loop while still being bounded by `max_tasks`.
 
-### Request Propagation
+### Why Request Propagation?
 
-Celery's task request is associated with the worker execution context.
+Celery's request context is associated with the worker execution context.
 
 The asyncio event loop runs in a separate thread, so the package explicitly transfers the current Celery request into that execution context.
 
@@ -615,40 +505,36 @@ self.retry()
 
 The request is pushed before async execution and removed afterward.
 
-This is Celery task-request propagation, not Flask HTTP request-context propagation.
-
 ## Execution Model
 
 The execution flow can be summarized as:
 
 ```text
 Celery Consumer
-      │
-      ▼
- AsyncIOPool
-      │
-      ▼
+       │
+       ▼
+   AsyncIOPool
+       │
+       ▼
  Bridge Thread
-      │
-      ▼
+       │
+       ▼
  Celery Task
-      │
-      ▼
+       │
+       ▼
  AsyncExecutor
-      │
-      ▼
+       │
+       ▼
  Persistent asyncio Event Loop
-      │
-      ├── Coroutine A
-      ├── Coroutine B
-      └── Coroutine C
+       │
+       ├── Coroutine A
+       ├── Coroutine B
+       └── Coroutine C
 ```
 
-The bridge thread allows Celery's synchronous execution and tracing model to interact with the asynchronous execution model.
+The bridge thread allows Celery's synchronous task execution and tracing model to interact with the asynchronous execution model.
 
 The asyncio executor then schedules the coroutine on the persistent event loop.
-
-The bridge thread waits for the asyncio execution to complete so that Celery can continue using its normal synchronous task execution and callback model.
 
 ## Limitations
 
@@ -657,8 +543,6 @@ The bridge thread waits for the asyncio execution to complete so that Celery can
 Consumer-side `worker_disable_prefetch` support depends on Celery and the broker transport.
 
 The asyncio executor's own `max_tasks` limit remains the final execution boundary.
-
-If consumer-side prefetch control is unavailable for a broker, the executor still prevents more than `max_tasks` async tasks from actively executing.
 
 ### Worker Pool
 
@@ -670,15 +554,6 @@ flask_async_celery.pool:AsyncIOPool
 
 for the package's asyncio execution model.
 
-For example:
-
-```bash
-celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
-    -c 5 \
-    --loglevel=INFO
-```
-
 ### One Event Loop Per Worker Process
 
 Each worker process owns its own asyncio event loop and concurrency limit.
@@ -688,25 +563,12 @@ For example:
 ```bash
 celery -A your_app.celery worker \
     -P flask_async_celery.pool:AsyncIOPool \
-    -c 5 \
-    --loglevel=INFO
+    -c 5
 ```
 
 creates a worker configuration with five execution slots.
 
-If you run multiple worker processes, each process has its own pool, bridge threads, and asyncio event loop.
-
-The total async capacity is therefore distributed across the worker processes.
-
-### HTTP Request Data
-
-A Celery task should not depend on the lifetime of the Flask HTTP request that originally triggered it.
-
-Pass required request-specific information explicitly to the task.
-
-### Task Termination
-
-The package relies on Celery's normal worker lifecycle and task tracing mechanisms. It does not provide a separate public API for individually terminating asyncio tasks.
+If you run multiple worker processes, each process has its own pool and event loop.
 
 ## Testing
 
@@ -720,19 +582,16 @@ The project tests the execution model with real Celery workers in addition to un
 
 The test suite covers:
 
-- executor concurrency
-- executor lifecycle
-- async task execution
-- synchronous task execution
-- async exceptions
-- async retries
-- synchronous retries
-- Celery worker integration
-- Redis consumer backpressure
-- Celery Hub wakeup behavior
-- Flask extension configuration
-- Flask application-context handling
-- end-to-end Flask/Celery/async execution
+* executor concurrency
+* async task execution
+* synchronous task execution
+* async exceptions
+* async retries
+* synchronous retries
+* Celery worker integration
+* Redis consumer backpressure
+* Flask extension configuration
+* end-to-end Flask/Celery/async execution
 
 A successful test run should show all tests passing.
 
@@ -741,7 +600,7 @@ A successful test run should show all tests passing.
 Current version:
 
 ```text
-0.1.2
+0.1.1
 ```
 
 ## License
@@ -755,3 +614,17 @@ This software is distributed under the terms of the GNU General Public License v
 See the [LICENSE](LICENSE) file for the complete license text.
 
 For the full license terms, see the official GNU General Public License v3.0 text.
+
+---
+
+Copyright (c) 2026 Mazhar Ali
+
+````
+
+One correction outside the README: for the GPL metadata, I'd use **GPL-3.0-only** rather than the broader `GPL-3.0` if you specifically want this project licensed under version 3 only:
+
+```toml
+license = {text = "GPL-3.0-only"}
+````
+
+And make sure `LICENSE` contains the **full GPL-3.0 license text**, not the old MIT text.
