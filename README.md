@@ -619,9 +619,3 @@ Copyright (c) 2026 Mazhar Ali
 
 ````
 
-One correction outside the README: for the GPL metadata, I'd use **GPL-3.0-only** rather than the broader `GPL-3.0` if you specifically want this project licensed under version 3 only:
-
-```toml
-license = {text = "GPL-3.0-only"}
-````
-
