@@ -1,5 +1,3 @@
-Absolutely. Here is the **complete `README.md`**, ready to copy and replace your existing file. It keeps the content from your uploaded README, updates the version to **0.1.1**, adds the GPL-3.0 license section, and includes the `LICENSE` file in the project structure. 
-
 ````markdown
 # Flask Async Celery
 
