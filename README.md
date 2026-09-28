@@ -617,5 +617,4 @@ For the full license terms, see the official GNU General Public License v3.0 tex
 
 Copyright (c) 2026 Mazhar Ali
 
-````
 
