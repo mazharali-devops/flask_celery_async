@@ -179,7 +179,6 @@ Run the worker using the package's custom pool:
 
 ```bash
 celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
     -c 5 \
     --loglevel=INFO
 ```
@@ -188,7 +187,6 @@ For example:
 
 ```bash
 celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
     -c 10 \
     --loglevel=INFO
 ```
@@ -210,7 +208,6 @@ should normally be started with:
 
 ```bash
 celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
     -c 5 \
     --loglevel=INFO
 ```
