@@ -11,12 +11,9 @@ class AsyncIOBootStep(bootsteps.StartStopStep):
     """
     Worker bootstep for the Flask Async Celery integration.
 
-    The Celery Pool bootstep is required so this component starts
-    after the worker pool has been created.
-
-    The actual asyncio event loop is owned by AsyncIOPool/
-    AsyncExecutor. This bootstep provides the worker-level hook
-    that we will use for lifecycle and backpressure handling.
+    This bootstep exposes the asyncio executor owned by AsyncIOPool
+    through the Celery worker so other worker components can inspect
+    its state.
     """
 
     requires = {"celery.worker.components:Pool"}
@@ -26,9 +23,7 @@ class AsyncIOBootStep(bootsteps.StartStopStep):
         super().__init__(worker, **kwargs)
 
     def start(self, worker) -> None:
-        """
-        Called when the Celery worker starts.
-        """
+        """Called when the Celery worker starts."""
 
         pool = getattr(worker, "pool", None)
 
@@ -39,35 +34,29 @@ class AsyncIOBootStep(bootsteps.StartStopStep):
 
         # The custom pool owns the AsyncExecutor.
         #
-        # Keep a reference on the worker so other bootsteps/components
-        # can access it without importing the pool implementation.
-        if pool is not None and hasattr(pool, "executor"):
+        # Expose it on the worker so other bootsteps/components
+        # can inspect its state without importing the pool directly.
+        if pool is not None and hasattr(pool, "async_executor"):
             worker.async_executor = pool.async_executor
 
         worker.asyncio_enabled = True
 
     def stop(self, worker) -> None:
-        """
-        Called during normal worker shutdown.
-        """
+        """Called during normal worker shutdown."""
 
         logger.info("AsyncIO worker bootstep stopping")
 
         worker.asyncio_enabled = False
 
     def terminate(self, worker) -> None:
-        """
-        Called during forced worker termination.
-        """
+        """Called during forced worker termination."""
 
         logger.info("AsyncIO worker bootstep terminating")
 
         worker.asyncio_enabled = False
 
     def info(self, worker):
-        """
-        Expose basic information through worker inspection.
-        """
+        """Expose basic information through worker inspection."""
 
         executor = getattr(worker, "async_executor", None)
 

@@ -1,11 +1,13 @@
 from __future__ import annotations
+
 import inspect
 import logging
 import os
+import time
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, Callable
-import time
-from celery.concurrency.base import BasePool, apply_target
+
+from celery.concurrency.base import BasePool
 
 from .executor import AsyncExecutor
 from .task import reset_async_executor, set_async_executor
@@ -63,11 +65,11 @@ class AsyncIOPool(BasePool):
     body_can_be_buffer = True
 
     def __init__(
-        self,
-        *args: Any,
-        max_tasks: int | None = None,
-        thread_name: str = "celery-asyncio",
-        **kwargs: Any,
+            self,
+            *args: Any,
+            max_tasks: int | None = None,
+            thread_name: str = "celery-asyncio",
+            **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
 
@@ -93,6 +95,7 @@ class AsyncIOPool(BasePool):
             thread_name=thread_name,
         )
 
+        self.asyncio_hub_wakeup = None
         # Celery tracing must NOT run on the asyncio event-loop
         # thread. These threads execute Celery's synchronous trace
         # function.
@@ -105,6 +108,31 @@ class AsyncIOPool(BasePool):
             "AsyncIOPool initialized: max_tasks=%s",
             self.max_tasks,
         )
+
+    def _wake_celery_hub(self) -> None:
+        wakeup = self.asyncio_hub_wakeup
+
+        if wakeup is None:
+            return
+
+        try:
+            wakeup.wake()
+        except Exception:
+            logger.debug(
+                "Failed to wake Celery Hub",
+                exc_info=True,
+            )
+
+    def _get_info(self) -> dict[str, Any]:
+        info = super()._get_info()
+
+        return {
+            **info,
+            "max-concurrency": self.max_tasks,
+            "asyncio-running": self.async_executor.running,
+            "asyncio-available": self.async_executor.available,
+            "bridge-threads": len(self.executor._threads),
+        }
 
     @property
     def num_processes(self) -> int:
@@ -123,40 +151,43 @@ class AsyncIOPool(BasePool):
     def on_stop(self) -> None:
         logger.info("Stopping AsyncIOPool")
 
-        self.executor.shutdown(
-            wait=True,
-            cancel_futures=False,
-        )
-
+        # Stop asyncio first so bridge threads blocked in
+        # future.result() can be released.
         self.async_executor.shutdown(
             wait=True,
             timeout=10,
         )
 
+        # Now the bridge threads can finish.
+        self.executor.shutdown(
+            wait=True,
+            cancel_futures=False,
+        )
+
         super().on_stop()
 
     def on_terminate(self) -> None:
-        logger.warning("Terminating AsyncIOPool")
+
+
+        self.async_executor.shutdown(
+            wait=False,
+        )
 
         self.executor.shutdown(
             wait=False,
             cancel_futures=True,
         )
 
-        self.async_executor.shutdown(
-            wait=False,
-        )
-
         super().on_terminate()
 
     def on_apply(
-        self,
-        target: Callable[..., Any],
-        args: tuple[Any, ...] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        callback: Callable[..., Any] | None = None,
-        accept_callback: Callable[..., Any] | None = None,
-        **options: Any,
+            self,
+            target: Callable[..., Any],
+            args: tuple[Any, ...] | None = None,
+            kwargs: dict[str, Any] | None = None,
+            callback: Callable[..., Any] | None = None,
+            accept_callback: Callable[..., Any] | None = None,
+            **options: Any,
     ) -> ApplyResult:
         """
         Submit Celery's tracing function to a bridge thread.
@@ -196,15 +227,17 @@ class AsyncIOPool(BasePool):
             accept_callback: Callable[..., Any] | None,
     ) -> Any:
         token = set_async_executor(self.async_executor)
+        started = time.monotonic()
 
         try:
             if accept_callback:
-                accept_callback(os.getpid(), time.monotonic())
+                accept_callback(
+                    os.getpid(),
+                    time.monotonic(),
+                )
 
             result = target(*args, **kwargs)
 
-            # Async Celery target:
-            # run the coroutine on the persistent asyncio event loop.
             if inspect.isawaitable(result):
                 future = self.async_executor.submit(result)
                 result = future.result()
@@ -215,21 +248,12 @@ class AsyncIOPool(BasePool):
             return result
 
         except BaseException:
+            logger.exception(
+                "Celery task execution failed after %.3fs",
+                time.monotonic() - started,
+            )
             raise
 
         finally:
             reset_async_executor(token)
-
-    def _get_info(self) -> dict[str, Any]:
-        info = super()._get_info()
-
-        info.update(
-            {
-                "max-concurrency": self.max_tasks,
-                "asyncio-running": self.async_executor.running,
-                "asyncio-available": self.async_executor.available,
-                "bridge-threads": len(self.executor._threads),
-            }
-        )
-
-        return info
+            self._wake_celery_hub()

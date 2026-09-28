@@ -5,6 +5,10 @@ from typing import Any
 from celery import Celery
 from flask import Flask
 
+from .bootstep import AsyncIOBootStep
+from .hub_bootstep import AsyncIOHubWakeupBootStep
+from .task import AsyncTask
+
 
 class AsyncCelery:
     """
@@ -26,7 +30,9 @@ class AsyncCelery:
         **celery_options: Any,
     ) -> None:
         if max_tasks < 1:
-            raise ValueError("max_tasks must be greater than zero")
+            raise ValueError(
+                "max_tasks must be greater than zero"
+            )
 
         self.app: Flask | None = None
         self.celery: Celery
@@ -53,6 +59,10 @@ class AsyncCelery:
         self.app = app
 
         app.extensions["async_celery"] = self
+
+        # Make the Flask application available to AsyncTask
+        # when the task executes in the Celery worker.
+        self.celery.flask_app = app
 
         app.config.setdefault(
             "ASYNC_CELERY_MAX_TASKS",
@@ -86,22 +96,35 @@ class AsyncCelery:
             worker_disable_prefetch=self.disable_prefetch,
         )
 
+        self.celery.steps["worker"].add(
+            AsyncIOBootStep
+        )
+
+        self.celery.steps["worker"].add(
+            AsyncIOHubWakeupBootStep
+        )
+
     def task(self, *args: Any, **kwargs: Any):
         """
         Register a Celery task.
 
+        Async tasks use AsyncTask by default.
+
         Usage:
 
-            @celery.task
+            @async_celery.task
             async def task():
                 ...
 
-        or:
+        A custom task base can still be provided:
 
-            @celery.task(base=AsyncTask)
-            async def task():
+            @async_celery.task(base=CustomTask)
+            def task():
                 ...
         """
+
+        kwargs.setdefault("base", AsyncTask)
+
         return self.celery.task(*args, **kwargs)
 
     def send_task(self, *args: Any, **kwargs: Any):
