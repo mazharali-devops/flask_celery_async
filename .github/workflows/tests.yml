@@ -6,6 +6,9 @@ on:
       - master
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Python ${{ matrix.python-version }}
@@ -40,6 +43,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install Redis server
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
 
       - name: Upgrade pip
         run: |
@@ -48,6 +57,11 @@ jobs:
       - name: Install package
         run: |
           pip install -e ".[test,redis]"
+
+      - name: Verify Redis
+        run: |
+          redis-server --version
+          redis-cli --version
 
       - name: Run tests
         env:
