@@ -625,4 +625,3 @@ One correction outside the README: for the GPL metadata, I'd use **GPL-3.0-only*
 license = {text = "GPL-3.0-only"}
 ````
 
-And make sure `LICENSE` contains the **full GPL-3.0 license text**, not the old MIT text.
