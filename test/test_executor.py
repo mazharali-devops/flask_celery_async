@@ -258,3 +258,91 @@ def test_executor_recovers_after_cancellation(executor):
 
     assert executor.running == 0
     assert executor.available == executor.max_tasks
+
+
+
+def test_long_running_tasks():
+    executor = AsyncExecutor(
+        max_tasks=2,
+        slow_task_threshold=0.1,
+    )
+    executor.start()
+
+    async def slow_task():
+        await asyncio.sleep(0.3)
+        return "done"
+
+    try:
+        future = executor.submit(
+            slow_task(),
+            task_id="slow-1",
+            task_name="test.slow_task",
+        )
+
+        # Give the coroutine enough time to cross the threshold.
+        time.sleep(0.15)
+
+        tasks = executor.long_running_tasks()
+
+        assert len(tasks) == 1
+        assert tasks[0]["task_id"] == "slow-1"
+        assert tasks[0]["task_name"] == "test.slow_task"
+        assert tasks[0]["state"] == "RUNNING"
+        assert tasks[0]["duration"] >= 0.1
+
+        stats = executor.stats()
+
+        assert stats["running"] == 1
+        assert stats["long_running"] == 1
+        assert stats["slow_task_threshold"] == 0.1
+
+        assert future.result(timeout=2) == "done"
+
+        assert executor.long_running_tasks() == []
+
+    finally:
+        executor.shutdown()
+
+def test_task_cancellation():
+    executor = AsyncExecutor(
+        max_tasks=1,
+        slow_task_threshold=1,
+    )
+    executor.start()
+
+    async def cancellable_task():
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise
+
+    future = executor.submit(
+        cancellable_task(),
+        task_id="cancel-1",
+        task_name="test.cancellable",
+    )
+
+    try:
+        time.sleep(0.1)
+
+        # Cancel the asyncio coroutine through the asyncio loop.
+        executor.loop.call_soon_threadsafe(
+            lambda: [
+                task.cancel()
+                for task in asyncio.all_tasks(executor.loop)
+                if task.get_name() != "Task-1"
+            ]
+        )
+
+        with pytest.raises(CancelledError):
+            future.result(timeout=2)
+
+        stats = executor.stats()
+
+        assert stats["cancelled"] == 1
+        assert stats["running"] == 0
+        assert stats["available"] == 1
+        assert stats["total"] == 1
+
+    finally:
+        executor.shutdown()

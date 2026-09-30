@@ -3,9 +3,9 @@ from __future__ import annotations
 import inspect
 from contextvars import ContextVar
 from typing import Any
-
+from concurrent.futures import CancelledError
 from celery import Task
-
+from celery.exceptions import Ignore
 _async_executor: ContextVar[Any | None] = ContextVar(
     "flask_async_celery_executor",
     default=None,
@@ -74,14 +74,21 @@ class AsyncTask(Task):
         coroutine = execute_with_request()
 
         try:
-            future = executor.submit(coroutine)
+            future = executor.submit(
+                coroutine,
+                task_id=self.request.id,
+                task_name=self.name,
+            )
         except BaseException:
-            # The coroutine was never accepted by the executor,
-            # so we still own it and must close it.
             if inspect.iscoroutine(coroutine):
                 coroutine.close()
             raise
 
-        # From this point onward, the asyncio event loop owns
-        # the coroutine. Let its Future control its lifecycle.
-        return future.result()
+        try:
+            return future.result()
+        except CancelledError as exc:
+            if executor.get_cancel_reason(request.id) is not None:
+                raise Ignore("Task cancelled") from exc
+            raise
+        finally:
+            executor.clear_cancel_reason(request.id)

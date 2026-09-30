@@ -3,7 +3,9 @@ from __future__ import annotations
 import inspect
 import logging
 import os
+import threading
 import time
+from concurrent.futures import CancelledError
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, Callable
 
@@ -16,13 +18,14 @@ logger = logging.getLogger(__name__)
 
 
 class ApplyResult:
-    """
-    Celery-compatible result wrapper around a Future.
-    """
-
-    def __init__(self, future: Future) -> None:
+    def __init__(
+            self,
+            future: Future,
+            terminate_callback: Callable[[int | None], bool] | None = None,
+    ) -> None:
         self.f = future
         self.get = future.result
+        self._terminate_callback = terminate_callback
 
     def wait(self, timeout: float | None = None) -> None:
         wait([self.f], timeout)
@@ -33,8 +36,13 @@ class ApplyResult:
     def successful(self) -> bool:
         if not self.f.done():
             return False
-
         return self.f.exception() is None
+
+    def terminate(self, signal=None) -> bool:
+        if self._terminate_callback is None:
+            return False
+
+        return self._terminate_callback(signal)
 
 
 class AsyncIOPool(BasePool):
@@ -68,10 +76,25 @@ class AsyncIOPool(BasePool):
             self,
             *args: Any,
             max_tasks: int | None = None,
+            slow_task_threshold: float | None = None,
             thread_name: str = "celery-asyncio",
             **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
+
+        app = kwargs.get("app")
+        self._apply_results = {}
+        self._apply_results_lock = threading.Lock()
+        if slow_task_threshold is None and app is not None:
+            slow_task_threshold = app.conf.get(
+                "ASYNC_CELERY_SLOW_TASK_THRESHOLD",
+                30.0,
+            )
+
+        if slow_task_threshold is None:
+            slow_task_threshold = 30.0
+
+        self.slow_task_threshold = float(slow_task_threshold)
 
         configured_limit = (
             max_tasks
@@ -89,10 +112,16 @@ class AsyncIOPool(BasePool):
                 "AsyncIOPool max_tasks must be greater than zero"
             )
 
+        if slow_task_threshold < 0:
+            raise ValueError(
+                "slow_task_threshold must be greater than or equal to zero"
+            )
+
         # Persistent asyncio event loop.
         self.async_executor = AsyncExecutor(
             max_tasks=self.max_tasks,
             thread_name=thread_name,
+            slow_task_threshold=self.slow_task_threshold,
         )
 
         self.asyncio_hub_wakeup = None
@@ -168,7 +197,6 @@ class AsyncIOPool(BasePool):
 
     def on_terminate(self) -> None:
 
-
         self.async_executor.shutdown(
             wait=False,
         )
@@ -180,32 +208,30 @@ class AsyncIOPool(BasePool):
 
         super().on_terminate()
 
+    def terminate_job(self, pid, signal=None):
+        """Celery compatibility hook.
+
+        Async tasks are cancelled through ApplyResult.terminate()
+        rather than by terminating the worker process.
+        """
+        return None
+
     def on_apply(
             self,
-            target: Callable[..., Any],
-            args: tuple[Any, ...] | None = None,
-            kwargs: dict[str, Any] | None = None,
-            callback: Callable[..., Any] | None = None,
-            accept_callback: Callable[..., Any] | None = None,
-            **options: Any,
-    ) -> ApplyResult:
-        """
-        Submit Celery's tracing function to a bridge thread.
-
-        The bridge thread executes Celery's normal synchronous
-        tracing machinery.
-
-        AsyncTask then detects the coroutine and submits it to
-        the persistent asyncio event loop.
-        """
-
+            target,
+            args=None,
+            kwargs=None,
+            callback=None,
+            accept_callback=None,
+            **options,
+    ):
         args = args or ()
         kwargs = kwargs or {}
 
         if not self.async_executor.is_running:
-            raise RuntimeError(
-                "AsyncIO executor is not running"
-            )
+            raise RuntimeError("AsyncIO executor is not running")
+
+        task_id = options.get("correlation_id")
 
         future = self.executor.submit(
             self._run_celery_target,
@@ -214,9 +240,35 @@ class AsyncIOPool(BasePool):
             kwargs,
             callback,
             accept_callback,
+            task_id,
         )
 
-        return ApplyResult(future)
+        def terminate(signal=None):
+            if task_id is not None:
+                if self.async_executor.cancel_task(
+                        task_id,
+                        reason=signal,
+                ):
+                    return True
+
+            return future.cancel()
+
+        result = ApplyResult(
+            future,
+            terminate_callback=terminate,
+        )
+
+        if task_id is not None:
+            with self._apply_results_lock:
+                self._apply_results[task_id] = result
+
+            def cleanup(_future):
+                with self._apply_results_lock:
+                    self._apply_results.pop(task_id, None)
+
+            future.add_done_callback(cleanup)
+
+        return result
 
     def _run_celery_target(
             self,
@@ -225,6 +277,7 @@ class AsyncIOPool(BasePool):
             kwargs: dict[str, Any],
             callback: Callable[..., Any] | None,
             accept_callback: Callable[..., Any] | None,
+            task_id=None
     ) -> Any:
         token = set_async_executor(self.async_executor)
         started = time.monotonic()
@@ -239,19 +292,46 @@ class AsyncIOPool(BasePool):
             result = target(*args, **kwargs)
 
             if inspect.isawaitable(result):
-                future = self.async_executor.submit(result)
-                result = future.result()
+                future = self.async_executor.submit(
+                    result,
+                    task_id=task_id,
+                    task_name=getattr(target, "__qualname__", None),
+                )
+
+                try:
+                    result = future.result()
+                except CancelledError:
+                    raise
 
             if callback:
                 callback(result)
 
             return result
 
-        except BaseException:
-            logger.exception(
-                "Celery task execution failed after %.3fs",
+
+        except CancelledError:
+
+            logger.info(
+
+                "Celery task execution cancelled after %.3fs",
+
                 time.monotonic() - started,
+
             )
+
+            raise
+
+
+        except BaseException:
+
+            logger.exception(
+
+                "Celery task execution failed after %.3fs",
+
+                time.monotonic() - started,
+
+            )
+
             raise
 
         finally:

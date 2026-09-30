@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import time
-
+from concurrent.futures import CancelledError
 import pytest
 from celery import Celery
-
+import threading
 from flask_async_celery.pool import AsyncIOPool
 
 
@@ -1192,6 +1192,74 @@ def test_asyncio_pool_memory_failures_without_future_retention(celery_app):
                 f"  Batch {index}: "
                 f"{rss / 1024 / 1024:.1f} MB"
             )
+
+    finally:
+        pool.on_stop()
+
+
+
+def test_asyncio_pool_terminate_job_cancels_task(celery_app):
+    """
+    Verify that terminating an individual pool task propagates
+    cancellation to the asyncio coroutine.
+    """
+
+    pool = AsyncIOPool(
+        limit=1,
+        app=celery_app,
+    )
+
+    pool.on_start()
+
+    started = threading.Event()
+    cancelled = threading.Event()
+
+    async def long_running_task():
+        started.set()
+
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    try:
+        task_id = "pool-terminate-1"
+
+        result = pool.on_apply(
+            target=long_running_task,
+            args=(),
+            kwargs={},
+            callback=lambda value: None,
+            correlation_id=task_id,
+        )
+
+        assert started.wait(timeout=5)
+
+        assert pool.async_executor.running == 1
+        assert pool.async_executor.available == 0
+
+        # This is the same path used by Celery's Request.terminate().
+        assert result.terminate(signal=15) is True
+
+        with pytest.raises(CancelledError):
+            result.get(timeout=5)
+
+        assert cancelled.wait(timeout=5)
+
+        deadline = time.monotonic() + 5
+
+        while time.monotonic() < deadline:
+            if (
+                pool.async_executor.running == 0
+                and pool.async_executor.available == 1
+            ):
+                break
+
+            time.sleep(0.01)
+
+        assert pool.async_executor.running == 0
+        assert pool.async_executor.available == 1
 
     finally:
         pool.on_stop()
