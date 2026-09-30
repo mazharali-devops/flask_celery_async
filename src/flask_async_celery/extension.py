@@ -27,6 +27,7 @@ class AsyncCelery:
         result_backend: str | None = None,
         max_tasks: int = 20,
         disable_prefetch: bool = True,
+        slow_task_threshold: float = 30.0,
         **celery_options: Any,
     ) -> None:
         if max_tasks < 1:
@@ -39,7 +40,7 @@ class AsyncCelery:
 
         self.max_tasks = max_tasks
         self.disable_prefetch = disable_prefetch
-
+        self.slow_task_threshold = slow_task_threshold
         if celery is not None:
             self.celery = celery
         else:
@@ -74,6 +75,11 @@ class AsyncCelery:
             self.disable_prefetch,
         )
 
+        app.config.setdefault(
+            "ASYNC_CELERY_SLOW_TASK_THRESHOLD",
+            self.slow_task_threshold,
+        )
+
         self.max_tasks = int(
             app.config["ASYNC_CELERY_MAX_TASKS"]
         )
@@ -82,6 +88,13 @@ class AsyncCelery:
             app.config["ASYNC_CELERY_DISABLE_PREFETCH"]
         )
 
+        self.slow_task_threshold = float(
+            app.config["ASYNC_CELERY_SLOW_TASK_THRESHOLD"]
+        )
+
+        self.celery.conf["ASYNC_CELERY_SLOW_TASK_THRESHOLD"] = (
+            self.slow_task_threshold
+        )
         if self.max_tasks < 1:
             raise ValueError(
                 "ASYNC_CELERY_MAX_TASKS must be greater than zero"

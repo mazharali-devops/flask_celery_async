@@ -1,6 +1,6 @@
+from . import control
 from .extension import AsyncCelery
 from .task import AsyncTask
-
 __all__ = [
     "AsyncCelery",
     "AsyncTask",

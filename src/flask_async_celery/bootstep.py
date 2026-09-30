@@ -56,8 +56,6 @@ class AsyncIOBootStep(bootsteps.StartStopStep):
         worker.asyncio_enabled = False
 
     def info(self, worker):
-        """Expose basic information through worker inspection."""
-
         executor = getattr(worker, "async_executor", None)
 
         if executor is None:
@@ -65,9 +63,21 @@ class AsyncIOBootStep(bootsteps.StartStopStep):
                 "asyncio-enabled": False,
             }
 
+        stats = executor.stats()
+
         return {
             "asyncio-enabled": True,
-            "asyncio-running": executor.running,
-            "asyncio-available": executor.available,
-            "asyncio-max-tasks": executor.max_tasks,
+            "asyncio-running": stats["running"],
+            "asyncio-available": stats["available"],
+            "asyncio-max-tasks": stats["max_tasks"],
+            "asyncio-completed": stats["completed"],
+            "asyncio-failed": stats["failed"],
+            "asyncio-cancelled": stats["cancelled"],
+            "asyncio-total": stats["total"],
+            "asyncio-average-duration": stats["average_duration"],
+            "asyncio-slow-task-threshold": stats["slow_task_threshold"],
+            "asyncio-long-running": stats["long_running"],
+            "asyncio-long-running-tasks": executor.long_running_tasks(),
+            "asyncio-event-loop-running": stats["event_loop_running"],
+            "asyncio-stopping": stats["stopping"],
         }
