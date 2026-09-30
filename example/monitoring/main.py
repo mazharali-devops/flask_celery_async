@@ -34,3 +34,5 @@ async def successful_task():
 async def failing_task():
     await asyncio.sleep(1)
     raise ValueError("intentional test failure")
+
+celery_app = celery.celery

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from celery.worker.control import Panel
+from celery.worker.control import inspect_command
 
 
-@Panel.register
-def async_stats(state):
+@inspect_command()
+def async_stats(state, **kwargs):
     """Return AsyncIO executor statistics."""
-    executor = getattr(state.worker, "async_executor", None)
+    pool = state.consumer.pool
+    executor = getattr(pool, "async_executor", None)
 
     if executor is None:
         return {
@@ -19,10 +20,11 @@ def async_stats(state):
     }
 
 
-@Panel.register
-def async_tasks(state):
+@inspect_command()
+def async_tasks(state, **kwargs):
     """Return currently running AsyncIO tasks."""
-    executor = getattr(state.worker, "async_executor", None)
+    pool = state.consumer.pool
+    executor = getattr(pool, "async_executor", None)
 
     if executor is None:
         return {
