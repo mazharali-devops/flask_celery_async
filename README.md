@@ -809,7 +809,7 @@ A successful test run should show all tests passing.
 Current version:
 
 ```text
-0.1.2
+0.2.0
 ```
 
 ## License
