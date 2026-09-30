@@ -13,6 +13,9 @@ Run native `async def` Celery tasks on a persistent asyncio event loop with boun
 - Redis consumer-side backpressure through Celery's `worker_disable_prefetch`.
 - Flask extension with simple configuration.
 - Graceful asyncio executor shutdown.
+- Task cancellation and termination through Celery's normal task lifecycle.
+- Async executor monitoring and long-running task detection.
+- Custom Celery control commands for async executor statistics and running tasks.
 - Compatible with Celery 5.6.x and Python 3.10+.
 
 ## Architecture
@@ -146,6 +149,7 @@ Configuration can be supplied through Flask:
 ```python
 app.config["ASYNC_CELERY_MAX_TASKS"] = 10
 app.config["ASYNC_CELERY_DISABLE_PREFETCH"] = True
+app.config["ASYNC_CELERY_SLOW_TASK_THRESHOLD"] = 30.0
 
 celery = AsyncCelery(
     app,
@@ -160,6 +164,7 @@ Available settings:
 | --- | ---: | --- |
 | `ASYNC_CELERY_MAX_TASKS` | `20` | Maximum number of concurrently executing async tasks. |
 | `ASYNC_CELERY_DISABLE_PREFETCH` | `True` | Enables Celery consumer-side backpressure where supported. |
+| `ASYNC_CELERY_SLOW_TASK_THRESHOLD` | `30.0` | Seconds after which a running async task is considered long-running. |
 
 Constructor arguments can also be used directly:
 
@@ -175,27 +180,17 @@ Flask configuration takes precedence over the constructor defaults when the exte
 
 ## Worker Configuration
 
-Run the worker using the package's custom pool:
+`AsyncCelery` configures the Celery worker to use the package's `AsyncIOPool` automatically.
+
+For normal usage, start the worker with:
 
 ```bash
-celery -A your_app.celery worker \
-    -c 5 \
-    --loglevel=INFO
+celery -A your_app.celery worker --loglevel=INFO
 ```
 
-For example:
+You normally do **not** need to pass `-P` or `--pool` manually, and you do not need to pass `-c` to configure async concurrency.
 
-```bash
-celery -A your_app.celery worker \
-    -c 10 \
-    --loglevel=INFO
-```
-
-The extension configures Celery's worker concurrency from `max_tasks`.
-
-If you provide `-c` on the worker command line, make sure it matches the configured `max_tasks` value.
-
-For example:
+Configure async concurrency through `AsyncCelery`:
 
 ```python
 celery = AsyncCelery(
@@ -204,15 +199,19 @@ celery = AsyncCelery(
 )
 ```
 
-should normally be started with:
+`max_tasks` is the package's async execution limit for each Celery worker process.
 
-```bash
-celery -A your_app.celery worker \
-    -c 5 \
-    --loglevel=INFO
-```
+The extension also configures Celery's worker concurrency from `max_tasks`, so the worker and async executor use the same configured capacity.
 
 The custom pool exposes its configured concurrency through `num_processes`, allowing Celery's consumer to use the same capacity when consumer-side prefetch is disabled.
+
+### Monitoring example
+
+The repository includes an example application under `example/monitoring`. Start it with:
+
+```bash
+celery -A example.monitoring.main:celery_app worker --loglevel=INFO
+```
 
 ## Concurrency
 
@@ -238,6 +237,71 @@ Additional work waits for an available execution slot.
 This is different from simply creating more threads. The package uses one persistent asyncio event loop and runs async coroutines concurrently on that loop.
 
 Each Celery worker process has its own asyncio executor and event loop.
+
+## Monitoring
+
+The package exposes async executor statistics through Celery's worker inspection system.
+
+The standard Celery inspect command includes the async metrics in the worker statistics:
+
+```bash
+celery -A example.monitoring.main:celery_app inspect stats
+```
+
+The async statistics include:
+
+- `asyncio-enabled`
+- `asyncio-running`
+- `asyncio-available`
+- `asyncio-max-tasks`
+- `asyncio-completed`
+- `asyncio-failed`
+- `asyncio-cancelled`
+- `asyncio-total`
+- `asyncio-average-duration`
+- `asyncio-slow-task-threshold`
+- `asyncio-long-running`
+- `asyncio-long-running-tasks`
+- `asyncio-event-loop-running`
+- `asyncio-stopping`
+
+The package also registers two custom Celery control commands:
+
+```python
+replies = celery_app.control.broadcast(
+    "async_stats",
+    reply=True,
+)
+
+replies = celery_app.control.broadcast(
+    "async_tasks",
+    reply=True,
+)
+```
+
+`async_stats` returns async executor statistics. `async_tasks` returns the currently running async tasks.
+
+These custom commands are invoked through Celery's Python control API; they are **not** standard `celery inspect <command>` CLI subcommands.
+
+### Long-running task threshold
+
+The default long-running threshold is 30 seconds. Configure it with `slow_task_threshold`:
+
+```python
+celery = AsyncCelery(
+    app,
+    max_tasks=5,
+    slow_task_threshold=60.0,
+)
+```
+
+Or through Flask configuration:
+
+```python
+app.config["ASYNC_CELERY_SLOW_TASK_THRESHOLD"] = 60.0
+```
+
+A running task is reported as long-running when its execution duration is above the configured threshold.
 
 ## Consumer Backpressure
 
@@ -519,6 +583,9 @@ The test suite covers:
 - `AsyncIOPool` execution
 - async task exceptions
 - async retries
+- running async task cancellation
+- queued async task cancellation
+- Celery task termination
 - synchronous task execution
 - synchronous retries
 - Celery worker integration
@@ -527,6 +594,9 @@ The test suite covers:
 - Flask extension configuration
 - Flask application-context isolation
 - end-to-end Flask/Celery/async execution
+- async executor statistics
+- long-running task detection
+- worker monitoring and control commands
 
 ## Project Structure
 
@@ -545,6 +615,10 @@ flask-async-celery/
 │       ├── hub_wakeup.py
 │       ├── pool.py
 │       └── task.py
+├── example/
+│   └── monitoring/
+│       ├── __init__.py
+│       └── main.py
 └── test/
     ├── conftest.py
     ├── test_executor.py
@@ -659,37 +733,25 @@ If consumer-side prefetch control is unavailable for a broker, the executor stil
 
 ### Worker Pool
 
-The worker must use:
+`AsyncCelery` configures the worker to use:
 
 ```text
 flask_async_celery.pool:AsyncIOPool
 ```
 
-for the package's asyncio execution model.
-
-For example:
+automatically. For normal usage, do not specify `-P` or `--pool` manually:
 
 ```bash
-celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
-    -c 5 \
-    --loglevel=INFO
+celery -A your_app.celery worker --loglevel=INFO
 ```
+
+Configure the async capacity with `max_tasks` when creating `AsyncCelery`.
 
 ### One Event Loop Per Worker Process
 
 Each worker process owns its own asyncio event loop and concurrency limit.
 
-For example:
-
-```bash
-celery -A your_app.celery worker \
-    -P flask_async_celery.pool:AsyncIOPool \
-    -c 5 \
-    --loglevel=INFO
-```
-
-creates a worker configuration with five execution slots.
+For example, configuring `max_tasks=5` creates five async execution slots in that worker process.
 
 If you run multiple worker processes, each process has its own pool, bridge threads, and asyncio event loop.
 
@@ -701,9 +763,18 @@ A Celery task should not depend on the lifetime of the Flask HTTP request that o
 
 Pass required request-specific information explicitly to the task.
 
-### Task Termination
+### Task Cancellation and Termination
 
-The package relies on Celery's normal worker lifecycle and task tracing mechanisms. It does not provide a separate public API for individually terminating asyncio tasks.
+Async tasks can be terminated through Celery's normal task termination mechanism. For example:
+
+```python
+result = my_task.delay()
+result.revoke(terminate=True)
+```
+
+The termination signal is propagated to the corresponding asyncio task. The asyncio task is cancelled, its executor slot is released, and Celery reports the task using its normal lifecycle and state handling.
+
+The package does not replace Celery's task state, acknowledgement, retry, or result handling. Celery remains responsible for the task lifecycle while the async executor handles cancellation of the underlying asyncio task.
 
 ## Testing
 
