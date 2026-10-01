@@ -4,7 +4,7 @@ from typing import Any
 
 from celery import Celery
 from flask import Flask
-
+from flask import Response
 from .bootstep import AsyncIOBootStep
 from .hub_bootstep import AsyncIOHubWakeupBootStep
 from .task import AsyncTask
@@ -80,6 +80,11 @@ class AsyncCelery:
             self.slow_task_threshold,
         )
 
+        app.config.setdefault(
+            "PROMETHEUS_ENABLED",
+            False,
+        )
+
         self.max_tasks = int(
             app.config["ASYNC_CELERY_MAX_TASKS"]
         )
@@ -101,6 +106,7 @@ class AsyncCelery:
             )
 
         self._configure()
+        self._register_metrics_endpoint()
 
     def _configure(self) -> None:
         self.celery.conf.update(
@@ -142,6 +148,35 @@ class AsyncCelery:
 
     def send_task(self, *args: Any, **kwargs: Any):
         return self.celery.send_task(*args, **kwargs)
+
+    def _register_metrics_endpoint(self) -> None:
+        """Register the Prometheus metrics endpoint."""
+
+        app = self.app
+
+        if app is None:
+            return
+
+        if not app.config.get("PROMETHEUS_ENABLED", False):
+            return
+
+        try:
+            from .metrics import create_registry
+            from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+        except ImportError as exc:
+            raise RuntimeError(
+                "Prometheus support requires prometheus-client. "
+                "Install it with: pip install flask-async-celery[prometheus]"
+            ) from exc
+
+        registry = create_registry(self.celery)
+
+        @app.route("/metrics")
+        def metrics():
+            return Response(
+                generate_latest(registry),
+                mimetype=CONTENT_TYPE_LATEST,
+            )
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self.celery, name)

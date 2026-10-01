@@ -45,6 +45,10 @@ redis = [
     "redis>=5.0",
 ]
 
+prometheus = [
+    "prometheus-client>=0.20",
+]
+
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",

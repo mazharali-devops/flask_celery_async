@@ -6,13 +6,14 @@ from flask_async_celery import AsyncCelery
 
 app = Flask(__name__)
 
+app.config["PROMETHEUS_ENABLED"] = True
+
 celery = AsyncCelery(
     app,
     broker_url="redis://127.0.0.1:6379/0",
     result_backend="redis://127.0.0.1:6379/1",
     max_tasks=5,
 )
-
 
 @celery.task
 async def slow_task(seconds=30):
