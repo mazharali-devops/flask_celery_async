@@ -83,12 +83,20 @@ pip install "flask-async-celery[redis]"
 pip install "flask-async-celery[test]"
 ```
 
+### With Prometheus monitoring
+
+```bash
+pip install "flask-async-celery[prometheus]"
+```
+
+This installs `prometheus-client` for the built-in `/metrics` endpoint.
+
 ### Development installation
 
 Clone the repository and install it in editable mode:
 
 ```bash
-git clone https://github.com/pyfuncode/flask_celery_async.git
+git clone https://github.com/mazharali-devops/flask_celery_async.git
 cd flask_celery_async
 
 pip install -e ".[test]"
@@ -302,6 +310,124 @@ app.config["ASYNC_CELERY_SLOW_TASK_THRESHOLD"] = 60.0
 ```
 
 A running task is reported as long-running when its execution duration is above the configured threshold.
+
+### Prometheus metrics
+
+Prometheus monitoring is optional and disabled by default.
+
+Enable it in Flask:
+
+```python
+app.config["PROMETHEUS_ENABLED"] = True
+```
+
+When enabled, the extension registers:
+
+```text
+GET /metrics
+```
+
+The endpoint exports metrics for each responding Celery worker, including:
+
+- currently running async tasks
+- available async execution slots
+- maximum async concurrency
+- completed tasks
+- failed tasks
+- cancelled tasks
+- average task duration
+- long-running tasks
+- configured slow-task threshold
+- asyncio event-loop status
+- executor stopping status
+
+Example:
+
+```python
+import asyncio
+
+from flask import Flask
+from flask_async_celery import AsyncCelery
+
+app = Flask(__name__)
+app.config["PROMETHEUS_ENABLED"] = True
+
+celery = AsyncCelery(
+    app,
+    broker_url="redis://127.0.0.1:6379/0",
+    result_backend="redis://127.0.0.1:6379/1",
+    max_tasks=5,
+)
+```
+
+Prometheus can scrape the endpoint with:
+
+```yaml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "flask-async-celery"
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - "127.0.0.1:5000"
+```
+
+The repository includes this configuration at:
+
+```text
+example/monitoring/prometheus.yml
+```
+
+The metrics collector uses the package's `async_stats` Celery control command to retrieve worker statistics. If no workers respond, the endpoint exports no async worker metrics.
+
+### Grafana dashboard
+
+A ready-to-import Grafana dashboard is included at:
+
+```text
+example/monitoring/grafana-dashboard.json
+```
+
+The dashboard includes panels for:
+
+- Running Async Tasks
+- Available Async Slots
+- Max Async Concurrency
+- Long Running Tasks
+- Completed Tasks
+- Failed Tasks
+- Cancelled Tasks
+- AsyncIO Event Loop
+- Running Tasks Over Time
+- Available Slots Over Time
+- Task Completion Rate
+- Task Failure Rate
+- Average Task Duration
+- Slow Task Threshold
+
+Basic monitoring setup:
+
+```text
+Flask application
+      │
+      ├── /metrics
+      │
+      ▼
+ Prometheus
+      │
+      ▼
+   Grafana
+```
+
+Start the monitoring worker:
+
+```bash
+celery -A example.monitoring.main:celery_app worker --loglevel=INFO
+```
+
+Start the Flask application using the monitoring example's application entry point, configure Prometheus to scrape its `/metrics` endpoint, and import `example/monitoring/grafana-dashboard.json` into Grafana.
 
 ## Consumer Backpressure
 
@@ -536,6 +662,7 @@ AsyncCelery(
     result_backend=None,
     max_tasks=20,
     disable_prefetch=True,
+    slow_task_threshold=30.0,
 )
 ```
 
@@ -564,7 +691,7 @@ because `AsyncCelery` automatically uses `AsyncTask` for async tasks.
 Clone the repository and install the project in editable mode:
 
 ```bash
-git clone https://github.com/pyfuncode/flask_celery_async.git
+git clone https://github.com/mazharali-devops/flask_celery_async.git
 cd flask_celery_async
 
 pip install -e ".[test]"
@@ -597,6 +724,9 @@ The test suite covers:
 - async executor statistics
 - long-running task detection
 - worker monitoring and control commands
+- Prometheus metric collection
+- Prometheus `/metrics` endpoint
+- Grafana dashboard configuration
 
 ## Project Structure
 
@@ -613,12 +743,15 @@ flask-async-celery/
 │       ├── bootstep.py
 │       ├── hub_bootstep.py
 │       ├── hub_wakeup.py
+│       ├── metrics.py
 │       ├── pool.py
 │       └── task.py
 ├── example/
 │   └── monitoring/
 │       ├── __init__.py
-│       └── main.py
+│       ├── grafana-dashboard.json
+│       ├── main.py
+│       └── prometheus.yml
 └── test/
     ├── conftest.py
     ├── test_executor.py
@@ -809,7 +942,7 @@ A successful test run should show all tests passing.
 Current version:
 
 ```text
-0.2.0
+0.2.1
 ```
 
 ## License

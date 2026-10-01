@@ -1,29 +1,26 @@
-# Changelog
-
-## 0.2.0 - 2026-09-30
+## [0.2.1] - 2026-10-01
 
 ### Added
 
-- Async task cancellation through Celery's normal termination mechanism.
-- Async executor statistics.
-- Running async task inspection.
-- Long-running task detection.
-- Configurable `slow_task_threshold`.
-- `async_stats` Celery control command.
-- `async_tasks` Celery control command.
-- Monitoring example.
+- Added Prometheus metrics support for monitoring async Celery workers.
+- Added `/metrics` endpoint when Prometheus support is enabled.
+- Added Prometheus and Grafana monitoring examples.
+- Added Grafana dashboard with async task and worker metrics.
+- Added async worker inspection commands:
+  - `async_stats`
+  - `async_tasks`
+- Added slow-task tracking and configurable slow-task thresholds.
 
 ### Improved
 
-- Async executor lifecycle and shutdown handling.
-- Cancellation handling for running and queued tasks.
-- Celery worker integration.
-- Automatic configuration of `AsyncIOPool`.
-- Documentation and worker configuration examples.
+- Improved async task cancellation and lifecycle handling.
+- Improved worker shutdown and asyncio task cleanup.
+- Improved monitoring of running, completed, failed, and cancelled tasks.
+- Added Prometheus integration tests and metrics endpoint tests.
+- Added `prometheus-client` to the test dependencies so CI runs the Prometheus test suite correctly.
 
-### Testing
+### Documentation
 
-- Added cancellation and termination tests.
-- Added executor monitoring and statistics tests.
-- Added long-running task detection tests.
-- Added worker control command tests.
+- Updated README with Prometheus and Grafana setup instructions.
+- Updated monitoring and cancellation documentation.
+- Added monitoring example configuration and dashboard files.
