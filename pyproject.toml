@@ -52,6 +52,7 @@ prometheus = [
 test = [
     "pytest>=8.0",
     "pytest-asyncio>=0.24",
+    "prometheus-client>=0.20",
 ]
 
 dev = [
