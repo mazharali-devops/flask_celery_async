@@ -1,6 +1,11 @@
 # Flask Async Celery
 
+[![PyPI](https://img.shields.io/pypi/v/flask-async-celery.svg)](https://pypi.org/project/flask-async-celery/)
+[![Python](https://img.shields.io/pypi/pyversions/flask-async-celery.svg)](https://pypi.org/project/flask-async-celery/)
+
 Run native `async def` Celery tasks on a persistent asyncio event loop with bounded concurrency, Flask integration, and Celery consumer-side backpressure.
+
+![Flask Async Celery architecture](docs/images/flask-async-celery-overview.png)
 
 ## Features
 
